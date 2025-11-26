@@ -1,21 +1,13 @@
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-console.log("Connecting to:", process.env.MONGODB_URI);
-mongoose.connect(process.env.MONGODB_URI, {
-    dbName: 'hoteldb'
-  })
-  .then(() => console.log("MongoDB Connected!"))
-  .catch(err => console.log("MongoDB Error:", err))
 
-// Fake Database (Memory me store hoga – restart pe gayab hoga, perfect for testing)
+// In-memory DB
 let users = [];
 let bookings = [];
 
@@ -23,66 +15,60 @@ let bookings = [];
 app.post('/register', async (req, res) => {
   const { email, password } = req.body;
   if (users.find(u => u.email === email)) {
-    return res.status(400).json({ error: "User already exists" });
+    return res.status(400).json({ error: 'User already exists' });
   }
   const hashed = await bcrypt.hash(password, 10);
   const user = { id: Date.now().toString(), email, password: hashed };
   users.push(user);
-  const token = jwt.sign({ id: user.id }, "secret-key-123");
-  res.json({ token, message: "Registered successfully!" });
+  const token = jwt.sign({ userId: user.id }, 'mysecretkey', { expiresIn: '7d' });
+  res.json({ token });
 });
 
 // Login
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
   const user = users.find(u => u.email === email);
-  if (!user || !await bcrypt.compare(password, user.password)) {
-    return res.status(401).json({ error: "Wrong email or password" });
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    return res.status(400).json({ error: 'Invalid credentials' });
   }
-  const token = jwt.sign({ id: user.id }, "secret-key-123");
-  res.json({ token, message: "Login successful!" });
+  const token = jwt.sign({ userId: user.id }, 'mysecretkey', { expiresIn: '7d' });
+  res.json({ token });
 });
 
-// Create Booking (JWT protected)
-app.post('/bookings', (req, res) => {
+// Middleware to verify token
+const verifyToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: "Login first" });
-
+  if (!token) return res.status(401).json({ error: 'No token' });
   try {
-    const decoded = jwt.verify(token, "secret-key-123");
-    const booking = {
-      id: Date.now().toString(),
-      userId: decoded.id,
-      hotel: req.body.hotel,
-      amount: req.body.amount,
-      date: new Date().toLocaleDateString(),
-      status: "Confirmed"
-    };
-    bookings.push(booking);
-    res.json({ success: true, booking });
-  } catch {
-    res.status(401).json({ error: "Invalid token" });
+    const decoded = jwt.verify(token, 'mysecretkey');
+    req.userId = decoded.userId;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
   }
+};
+
+// Create Booking
+app.post('/bookings', verifyToken, (req, res) => {
+  const booking = {
+    _id: Date.now().toString(),
+    userId: req.userId,
+    hotel: req.body.hotel,
+    checkIn: req.body.checkIn,
+    checkOut: req.body.checkOut,
+    guests: req.body.guests,
+    amount: req.body.amount,
+  };
+  bookings.push(booking);
+  res.json({ success: true, booking });
 });
 
 // Get My Bookings
-app.get('/bookings', (req, res) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: "Login first" });
-
-  try {
-    const decoded = jwt.verify(token, "secret-key-123");
-    const myBookings = bookings.filter(b => b.userId === decoded.id);
-    res.json(myBookings);
-  } catch {
-    res.status(401).json({ error: "Invalid token" });
-  }
+app.get('/bookings', verifyToken, (req, res) => {
+  const myBookings = bookings.filter(b => b.userId === req.userId);
+  res.json(myBookings);
 });
 
-const PORT = 5000;
-app.listen(PORT, () => {
-  console.log(`Backend chal raha hai: http://localhost:${PORT}`);
-  console.log("Register: POST /register {email, password}");
-  console.log("Login: POST /login {email, password}");
-  console.log("Bookings: GET/POST /bookings (Bearer token in header)");
+app.listen(5000, '0.0.0.0', () => {
+  console.log('Backend running on http://192.168.1.17:5000');
 });
